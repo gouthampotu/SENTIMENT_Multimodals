@@ -302,7 +302,7 @@ def analyze_review(
 # ==========================================
 
 st.title(
-    "🤖 Customer Happiness & Review GenAI Bot"
+    "🤖 Sentiment Analysis GenAI Bot"
 )
 
 st.write(
