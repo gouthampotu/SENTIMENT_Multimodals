@@ -1,596 +1,975 @@
 import streamlit as st
 import pandas as pd
-import time
 import torch
-import os
-from collections import Counter
-from transformers import pipeline
-from google import genai
+import time
 
-# ---------------------------------------------------
+from transformers import pipeline
+
+
+# ==========================================
 # PAGE CONFIGURATION
-# ---------------------------------------------------
+# ==========================================
 
 st.set_page_config(
-    page_title="Multi-LLM Sentiment Analysis Bot",
+    page_title="Customer Happiness GenAI Bot",
     page_icon="🤖",
     layout="wide"
 )
 
-# ---------------------------------------------------
-# CUSTOM CSS
-# ---------------------------------------------------
 
-st.markdown("""
-<style>
+# ==========================================
+# MODEL CONFIGURATION
+# ==========================================
 
-.main-title {
-    text-align: center;
-    font-size: 42px;
-    font-weight: bold;
+MODEL_CONFIG = {
+
+    "RoBERTa 3-Class": {
+        "task": "sentiment-analysis",
+        "model_id":
+        "cardiffnlp/twitter-roberta-base-sentiment-latest"
+    },
+
+    "Multilingual Sentiment": {
+        "task": "text-classification",
+        "model_id":
+        "tabularisai/multilingual-sentiment-analysis"
+    },
+
+    "BERTweet Sentiment": {
+        "task": "sentiment-analysis",
+        "model_id":
+        "finiteautomata/bertweet-base-sentiment-analysis"
+    },
+
+    "DistilBERT SST-2": {
+        "task": "sentiment-analysis",
+        "model_id":
+        "distilbert-base-uncased-finetuned-sst-2-english"
+    },
+
+    "DistilRoBERTa Emotion": {
+        "task": "text-classification",
+        "model_id":
+        "j-hartmann/emotion-english-distilroberta-base"
+    }
 }
 
-.sub-title {
-    text-align: center;
-    font-size: 18px;
-    color: gray;
-    margin-bottom: 30px;
-}
 
-.result-box {
-    padding: 20px;
-    border-radius: 10px;
-    text-align: center;
-    font-size: 22px;
-    font-weight: bold;
-    background-color: #f0f2f6;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# ---------------------------------------------------
-# LOAD HUGGING FACE MODEL 1
-# ---------------------------------------------------
+# ==========================================
+# LOAD SELECTED MODEL
+# ==========================================
 
 @st.cache_resource
-def load_model_1():
+def load_model(model_name):
 
-    model = pipeline(
-        "sentiment-analysis",
-        model="cardiffnlp/twitter-roberta-base-sentiment-latest",
-        device=0 if torch.cuda.is_available() else -1
+    config = MODEL_CONFIG[
+        model_name
+    ]
+
+    device = (
+        0
+        if torch.cuda.is_available()
+        else -1
     )
 
-    return model
+    return pipeline(
 
+        config["task"],
 
-# ---------------------------------------------------
-# LOAD HUGGING FACE MODEL 2
-# ---------------------------------------------------
+        model=config[
+            "model_id"
+        ],
 
-@st.cache_resource
-def load_model_2():
+        device=device,
 
-    model = pipeline(
-        "text-classification",
-        model="tabularisai/multilingual-sentiment-analysis",
-        device=0 if torch.cuda.is_available() else -1
+        truncation=True
     )
 
-    return model
 
+# ==========================================
+# SENTIMENT NORMALIZATION
+# ==========================================
 
-# ---------------------------------------------------
-# LOAD MODELS
-# ---------------------------------------------------
+def normalize_sentiment(label):
 
-with st.spinner("Loading AI models..."):
+    label = str(
+        label
+    ).lower()
 
-    model_1 = load_model_1()
-    model_2 = load_model_2()
-
-
-# ---------------------------------------------------
-# CONVERT 5 SENTIMENTS INTO 3 SENTIMENTS
-# ---------------------------------------------------
-
-def convert_to_three_sentiments(label):
-
-    label = label.lower()
-
-    if "positive" in label:
+    if (
+        label in [
+            "label_2",
+            "pos",
+            "positive"
+        ]
+        or "positive" in label
+    ):
         return "Positive"
 
-    elif "negative" in label:
+    if (
+        label in [
+            "label_0",
+            "neg",
+            "negative"
+        ]
+        or "negative" in label
+    ):
         return "Negative"
 
-    else:
-        return "Neutral"
+    return "Neutral"
 
 
-# ---------------------------------------------------
-# MODEL 1 PREDICTION
-# ---------------------------------------------------
+# ==========================================
+# EMOTION DETECTION
+# ==========================================
 
-def predict_roberta(text):
-
-    try:
-
-        start_time = time.time()
-
-        result = model_1(text)[0]
-
-        sentiment = result["label"].capitalize()
-
-        confidence = round(
-            result["score"] * 100,
-            2
-        )
-
-        processing_time = round(
-            time.time() - start_time,
-            4
-        )
-
-        return {
-            "Model": "RoBERTa",
-            "Sentiment": sentiment,
-            "Confidence": confidence,
-            "Time": processing_time
-        }
-
-    except Exception as e:
-
-        return {
-            "Model": "RoBERTa",
-            "Sentiment": "Error",
-            "Confidence": 0,
-            "Time": 0
-        }
-
-
-# ---------------------------------------------------
-# MODEL 2 PREDICTION
-# ---------------------------------------------------
-
-def predict_multilingual(text):
-
-    try:
-
-        start_time = time.time()
-
-        result = model_2(text)[0]
-
-        sentiment = convert_to_three_sentiments(
-            result["label"]
-        )
-
-        confidence = round(
-            result["score"] * 100,
-            2
-        )
-
-        processing_time = round(
-            time.time() - start_time,
-            4
-        )
-
-        return {
-            "Model": "Multilingual Model",
-            "Sentiment": sentiment,
-            "Confidence": confidence,
-            "Time": processing_time
-        }
-
-    except Exception as e:
-
-        return {
-            "Model": "Multilingual Model",
-            "Sentiment": "Error",
-            "Confidence": 0,
-            "Time": 0
-        }
-
-
-# ---------------------------------------------------
-# GEMINI CLIENT
-# ---------------------------------------------------
-
-def get_gemini_client():
-
-    try:
-
-        api_key = st.secrets["GEMINI_API_KEY"]
-
-        client = genai.Client(
-            api_key=api_key
-        )
-
-        return client
-
-    except:
-
-        return None
-
-
-# ---------------------------------------------------
-# GEMINI PREDICTION
-# ---------------------------------------------------
-
-def predict_gemini(text):
-
-    client = get_gemini_client()
-
-    if client is None:
-
-        return {
-            "Model": "Gemini",
-            "Sentiment": "API Key Missing",
-            "Confidence": "N/A",
-            "Time": 0
-        }
-
-    try:
-
-        start_time = time.time()
-
-        prompt = f"""
-        Analyze the sentiment of the following text.
-
-        Text:
-        {text}
-
-        Classify the sentiment as exactly one of:
-
-        Positive
-        Negative
-        Neutral
-
-        Return only one word.
-        Do not give any explanation.
-        """
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-
-        sentiment = response.text.strip().capitalize()
-
-        if sentiment not in [
-            "Positive",
-            "Negative",
-            "Neutral"
-        ]:
-
-            sentiment = "Neutral"
-
-        processing_time = round(
-            time.time() - start_time,
-            4
-        )
-
-        return {
-            "Model": "Gemini",
-            "Sentiment": sentiment,
-            "Confidence": "N/A",
-            "Time": processing_time
-        }
-
-    except Exception as e:
-
-        return {
-            "Model": "Gemini",
-            "Sentiment": "Error",
-            "Confidence": "N/A",
-            "Time": 0
-        }
-
-
-# ---------------------------------------------------
-# MAJORITY VOTING
-# ---------------------------------------------------
-
-def majority_vote(results):
-
-    valid_sentiments = [
-        result["Sentiment"]
-        for result in results
-        if result["Sentiment"]
-        in ["Positive", "Negative", "Neutral"]
-    ]
-
-    if not valid_sentiments:
-
-        return "Unable to Predict"
-
-    vote_count = Counter(valid_sentiments)
-
-    return vote_count.most_common(1)[0][0]
-
-
-# ---------------------------------------------------
-# SENTIMENT EMOJI
-# ---------------------------------------------------
-
-def get_sentiment_emoji(sentiment):
-
-    if sentiment == "Positive":
-        return "😊"
-
-    elif sentiment == "Negative":
-        return "😞"
-
-    elif sentiment == "Neutral":
-        return "😐"
-
-    else:
-        return "❓"
-
-
-# ---------------------------------------------------
-# MAIN UI
-# ---------------------------------------------------
-
-st.markdown(
-    '<div class="main-title">🤖 Multi-LLM Sentiment Analysis Bot</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    """
-    <div class="sub-title">
-    Compare sentiment predictions from RoBERTa,
-    a Multilingual AI Model, and Gemini
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# ---------------------------------------------------
-# SIDEBAR
-# ---------------------------------------------------
-
-with st.sidebar:
-
-    st.header("About the Project")
-
-    st.write("""
-    This GenAI bot analyzes text using multiple AI models.
-    """)
-
-    st.write("Models used:")
-
-    st.write("1. RoBERTa")
-    st.write("2. Multilingual Sentiment Model")
-    st.write("3. Gemini LLM")
-
-    st.divider()
-
-    st.write("""
-    The final result is generated using majority voting.
-    """)
-
-
-# ---------------------------------------------------
-# USER INPUT
-# ---------------------------------------------------
-
-user_text = st.text_area(
-    "Enter text for sentiment analysis:",
-    placeholder="Example: I really enjoyed this product, but the delivery was slow.",
-    height=150
-)
-
-
-# ---------------------------------------------------
-# EXAMPLE TEXT
-# ---------------------------------------------------
-
-example = st.selectbox(
-    "Or select an example:",
-    [
-        "Select an example",
-        "I absolutely loved this product!",
-        "The service was terrible and disappointing.",
-        "The product is okay, nothing special.",
-        "The movie was good but the ending was disappointing."
-    ]
-)
-
-if example != "Select an example":
-
-    user_text = example
-
-
-# ---------------------------------------------------
-# ANALYZE BUTTON
-# ---------------------------------------------------
-
-if st.button(
-    "🔍 Analyze Sentiment",
-    use_container_width=True,
-    type="primary"
+def detect_emotion(
+    label,
+    text,
+    sentiment=None
 ):
 
-    if not user_text.strip():
+    label = str(
+        label
+    ).lower()
 
-        st.warning(
-            "Please enter some text before analyzing."
+    text = str(
+        text
+    ).lower()
+
+    angry_words = [
+        "angry",
+        "furious",
+        "unacceptable",
+        "worst",
+        "frustrated",
+        "terrible",
+        "awful"
+    ]
+
+    surprise_words = [
+        "surprise",
+        "surprised",
+        "unexpected",
+        "wow",
+        "did not expect"
+    ]
+
+    if label in [
+        "anger",
+        "disgust"
+    ]:
+        return "Angry"
+
+    if any(
+        word in text
+        for word in angry_words
+    ):
+        return "Angry"
+
+    if label == "surprise":
+        return "Surprise"
+
+    if any(
+        word in text
+        for word in surprise_words
+    ):
+        return "Surprise"
+
+    if label in [
+        "joy",
+        "love"
+    ]:
+        return "Happy"
+
+    if label in [
+        "sadness",
+        "fear"
+    ]:
+        return "Sad"
+
+    if sentiment == "Positive":
+        return "Happy"
+
+    if sentiment == "Negative":
+        return "Sad"
+
+    return "Surprise"
+
+
+# ==========================================
+# ANALYZE SINGLE REVIEW
+# ==========================================
+
+def analyze_review(
+    text,
+    model_name
+):
+
+    model = load_model(
+        model_name
+    )
+
+    start_time = time.time()
+
+    result = model(
+        text[:1500]
+    )[0]
+
+    raw_label = result[
+        "label"
+    ]
+
+    confidence = round(
+        float(
+            result["score"]
+        ) * 100,
+        2
+    )
+
+    if (
+        model_name
+        == "DistilRoBERTa Emotion"
+    ):
+
+        emotion = detect_emotion(
+            raw_label,
+            text
         )
+
+        if emotion == "Happy":
+            sentiment = "Positive"
+
+        elif emotion in [
+            "Sad",
+            "Angry"
+        ]:
+            sentiment = "Negative"
+
+        else:
+            sentiment = "Neutral"
 
     else:
 
-        with st.spinner(
-            "Multiple AI models are analyzing your text..."
-        ):
-
-            result_1 = predict_roberta(user_text)
-
-            result_2 = predict_multilingual(user_text)
-
-            result_3 = predict_gemini(user_text)
-
-            all_results = [
-                result_1,
-                result_2,
-                result_3
-            ]
-
-            final_sentiment = majority_vote(
-                all_results
+        sentiment = (
+            normalize_sentiment(
+                raw_label
             )
-
-
-        # -------------------------------------------
-        # FINAL RESULT
-        # -------------------------------------------
-
-        st.divider()
-
-        st.subheader("🎯 Final Sentiment")
-
-        emoji = get_sentiment_emoji(
-            final_sentiment
         )
 
-        st.markdown(
+        emotion = detect_emotion(
+            raw_label,
+            text,
+            sentiment
+        )
+
+    customer_happy = (
+        "Yes"
+        if emotion in [
+            "Happy",
+            "Surprise"
+        ]
+        else "No"
+    )
+
+    processing_time = round(
+        time.time()
+        - start_time,
+        4
+    )
+
+    return {
+
+        "Sentiment":
+        sentiment,
+
+        "Emotion":
+        emotion,
+
+        "Customer Happy":
+        customer_happy,
+
+        "Confidence":
+        confidence,
+
+        "Processing Time":
+        processing_time
+    }
+
+
+# ==========================================
+# TITLE
+# ==========================================
+
+st.title(
+    "🤖 Customer Happiness & Review GenAI Bot"
+)
+
+st.write(
+    """
+    Analyze customer feedback and reviews
+    using five Hugging Face AI models.
+    """
+)
+
+
+# ==========================================
+# SIDEBAR
+# ==========================================
+
+st.sidebar.title(
+    "Model Selection"
+)
+
+selected_model = (
+    st.sidebar.selectbox(
+
+        "Select AI Model",
+
+        list(
+            MODEL_CONFIG.keys()
+        )
+    )
+)
+
+st.sidebar.success(
+    f"Selected: {selected_model}"
+)
+
+st.sidebar.info(
+    """
+    Only the selected model is loaded.
+    This reduces memory usage during deployment.
+    """
+)
+
+
+# ==========================================
+# TABS
+# ==========================================
+
+tab1, tab2 = st.tabs([
+
+    "🤖 Single Review Bot",
+
+    "📊 Upload Dataset & Report"
+])
+
+
+# ==========================================
+# TAB 1
+# ==========================================
+
+with tab1:
+
+    st.header(
+        "Analyze One Customer Review"
+    )
+
+    customer_text = (
+        st.text_area(
+
+            "Enter Customer Feedback or Review",
+
+            height=180,
+
+            placeholder=
+            "Example: I am very angry because the product arrived damaged."
+        )
+    )
+
+    if st.button(
+        "Analyze Customer",
+        type="primary"
+    ):
+
+        if not customer_text.strip():
+
+            st.warning(
+                "Please enter a customer review."
+            )
+
+        else:
+
+            with st.spinner(
+                f"Analyzing with {selected_model}..."
+            ):
+
+                result = analyze_review(
+
+                    customer_text,
+
+                    selected_model
+                )
+
+            col1, col2 = st.columns(2)
+
+            col3, col4 = st.columns(2)
+
+            col1.metric(
+                "Sentiment",
+                result["Sentiment"]
+            )
+
+            col2.metric(
+                "Customer Emotion",
+                result["Emotion"]
+            )
+
+            col3.metric(
+                "Confidence",
+                f"{result['Confidence']}%"
+            )
+
+            col4.metric(
+                "Processing Time",
+                f"{result['Processing Time']} sec"
+            )
+
+            if (
+                result[
+                    "Customer Happy"
+                ]
+                == "Yes"
+            ):
+
+                st.success(
+                    "😊 Customer is likely happy."
+                )
+
+            else:
+
+                st.error(
+                    "⚠️ Customer is not happy and may need attention."
+                )
+
+
+# ==========================================
+# TAB 2
+# ==========================================
+
+with tab2:
+
+    st.header(
+        "Upload Customer Dataset"
+    )
+
+    uploaded_file = (
+        st.file_uploader(
+
+            "Upload CSV File",
+
+            type=["csv"]
+        )
+    )
+
+    if uploaded_file:
+
+        df = pd.read_csv(
+            uploaded_file
+        )
+
+        st.success(
             f"""
-            <div class="result-box">
-            {emoji} {final_sentiment}
-            </div>
-            """,
-            unsafe_allow_html=True
+            Dataset uploaded successfully:
+            {len(df)} customers
+            """
         )
 
-
-        # -------------------------------------------
-        # MODEL RESULTS
-        # -------------------------------------------
-
-        st.subheader("🧠 Individual Model Results")
-
-        col1, col2, col3 = st.columns(3)
-
-
-        with col1:
-
-            st.metric(
-                "RoBERTa",
-                f"{get_sentiment_emoji(result_1['Sentiment'])} "
-                f"{result_1['Sentiment']}"
-            )
-
-            st.write(
-                f"Confidence: {result_1['Confidence']}%"
-            )
-
-            st.write(
-                f"Time: {result_1['Time']} seconds"
-            )
-
-
-        with col2:
-
-            st.metric(
-                "Multilingual Model",
-                f"{get_sentiment_emoji(result_2['Sentiment'])} "
-                f"{result_2['Sentiment']}"
-            )
-
-            st.write(
-                f"Confidence: {result_2['Confidence']}%"
-            )
-
-            st.write(
-                f"Time: {result_2['Time']} seconds"
-            )
-
-
-        with col3:
-
-            st.metric(
-                "Gemini",
-                f"{get_sentiment_emoji(result_3['Sentiment'])} "
-                f"{result_3['Sentiment']}"
-            )
-
-            st.write(
-                "Confidence: Not provided by Gemini"
-            )
-
-            st.write(
-                f"Time: {result_3['Time']} seconds"
-            )
-
-
-        # -------------------------------------------
-        # RESULTS TABLE
-        # -------------------------------------------
-
-        st.subheader("📋 Complete Model Comparison")
-
-        results_df = pd.DataFrame(
-            all_results
+        st.subheader(
+            "Dataset Preview"
         )
 
         st.dataframe(
-            results_df,
-            use_container_width=True,
-            hide_index=True
+            df.head(),
+            use_container_width=True
+        )
+
+        columns = list(
+            df.columns
+        )
+
+        feedback_index = (
+            columns.index("feedback")
+            if "feedback" in columns
+            else 0
+        )
+
+        review_index = (
+            columns.index("review")
+            if "review" in columns
+            else 0
+        )
+
+        feedback_column = (
+            st.selectbox(
+
+                "Select Feedback Column",
+
+                columns,
+
+                index=feedback_index
+            )
+        )
+
+        review_column = (
+            st.selectbox(
+
+                "Select Review Column",
+
+                columns,
+
+                index=review_index
+            )
+        )
+
+        rows_to_analyze = (
+            st.number_input(
+
+                "Number of Customers to Analyze",
+
+                min_value=1,
+
+                max_value=len(df),
+
+                value=min(
+                    500,
+                    len(df)
+                ),
+
+                step=100
+            )
         )
 
 
-        # -------------------------------------------
-        # PROCESSING TIME CHART
-        # -------------------------------------------
+        if st.button(
+            "Generate Complete Customer Report",
+            type="primary"
+        ):
 
-        st.subheader(
-            "⏱️ Processing Time Comparison"
-        )
+            work_df = df.head(
+                int(rows_to_analyze)
+            ).copy()
 
-        time_df = results_df[
-            ["Model", "Time"]
-        ].set_index("Model")
+            texts = (
 
-        st.bar_chart(time_df)
+                work_df[
+                    feedback_column
+                ]
+
+                .fillna("")
+
+                .astype(str)
+
+                + " "
+
+                + work_df[
+                    review_column
+                ]
+
+                .fillna("")
+
+                .astype(str)
+
+            ).tolist()
 
 
-        # -------------------------------------------
-        # VOTING RESULTS
-        # -------------------------------------------
+            with st.spinner(
+                "Analyzing customer reviews..."
+            ):
 
-        st.subheader(
-            "🗳️ Majority Voting"
-        )
+                model = load_model(
+                    selected_model
+                )
 
-        sentiment_counts = (
-            results_df[
-                results_df["Sentiment"].isin(
+                outputs = model(
+
                     [
-                        "Positive",
-                        "Negative",
-                        "Neutral"
+                        text[:1500]
+                        for text in texts
+                    ],
+
+                    batch_size=16,
+
+                    truncation=True,
+
+                    max_length=256
+                )
+
+
+            sentiments = []
+
+            emotions = []
+
+            confidences = []
+
+            happy_predictions = []
+
+
+            for text, output in zip(
+                texts,
+                outputs
+            ):
+
+                raw_label = output[
+                    "label"
+                ]
+
+                confidence = round(
+
+                    float(
+                        output["score"]
+                    ) * 100,
+
+                    2
+                )
+
+
+                if (
+                    selected_model
+                    == "DistilRoBERTa Emotion"
+                ):
+
+                    emotion = (
+                        detect_emotion(
+
+                            raw_label,
+
+                            text
+                        )
+                    )
+
+                    if emotion == "Happy":
+
+                        sentiment = "Positive"
+
+                    elif emotion in [
+                        "Sad",
+                        "Angry"
+                    ]:
+
+                        sentiment = "Negative"
+
+                    else:
+
+                        sentiment = "Neutral"
+
+
+                else:
+
+                    sentiment = (
+                        normalize_sentiment(
+                            raw_label
+                        )
+                    )
+
+                    emotion = (
+                        detect_emotion(
+
+                            raw_label,
+
+                            text,
+
+                            sentiment
+                        )
+                    )
+
+
+                happy = (
+                    "Yes"
+                    if emotion in [
+                        "Happy",
+                        "Surprise"
+                    ]
+                    else "No"
+                )
+
+
+                sentiments.append(
+                    sentiment
+                )
+
+                emotions.append(
+                    emotion
+                )
+
+                confidences.append(
+                    confidence
+                )
+
+                happy_predictions.append(
+                    happy
+                )
+
+
+            work_df[
+                "predicted_sentiment"
+            ] = sentiments
+
+            work_df[
+                "predicted_emotion"
+            ] = emotions
+
+            work_df[
+                "confidence"
+            ] = confidences
+
+            work_df[
+                "predicted_customer_happy"
+            ] = happy_predictions
+
+
+            emotion_counts = (
+
+                work_df[
+                    "predicted_emotion"
+                ]
+
+                .value_counts()
+
+                .reindex(
+
+                    [
+                        "Happy",
+                        "Sad",
+                        "Angry",
+                        "Surprise"
+                    ],
+
+                    fill_value=0
+                )
+            )
+
+
+            total = len(
+                work_df
+            )
+
+
+            report = pd.DataFrame({
+
+                "Emotion":
+                emotion_counts.index,
+
+                "Customers":
+                emotion_counts.values,
+
+                "Percentage":
+                (
+                    emotion_counts.values
+                    / total
+                    * 100
+                ).round(2)
+            })
+
+
+            st.header(
+                "📊 Complete Customer Report"
+            )
+
+
+            col1, col2, col3, col4 = (
+                st.columns(4)
+            )
+
+
+            col1.metric(
+                "😊 Happy",
+                int(
+                    emotion_counts[
+                        "Happy"
                     ]
                 )
-            ]["Sentiment"]
-            .value_counts()
-        )
+            )
 
-        st.bar_chart(sentiment_counts)
+            col2.metric(
+                "😢 Sad",
+                int(
+                    emotion_counts[
+                        "Sad"
+                    ]
+                )
+            )
+
+            col3.metric(
+                "😠 Angry",
+                int(
+                    emotion_counts[
+                        "Angry"
+                    ]
+                )
+            )
+
+            col4.metric(
+                "😲 Surprise",
+                int(
+                    emotion_counts[
+                        "Surprise"
+                    ]
+                )
+            )
 
 
-        # -------------------------------------------
-        # EXPLANATION
-        # -------------------------------------------
+            st.subheader(
+                "Emotion Summary"
+            )
 
-        st.info(
-            f"""
-            The final sentiment is **{final_sentiment}** because
-            the system compares predictions from all available
-            models and selects the sentiment with the most votes.
-            """
-        )
+            st.dataframe(
+
+                report,
+
+                use_container_width=True,
+
+                hide_index=True
+            )
+
+
+            st.subheader(
+                "Customer Emotion Visualization"
+            )
+
+            st.bar_chart(
+
+                report.set_index(
+                    "Emotion"
+                )["Customers"]
+            )
+
+
+            st.subheader(
+                "Happy vs Not Happy"
+            )
+
+            happy_counts = (
+
+                work_df[
+                    "predicted_customer_happy"
+                ]
+
+                .value_counts()
+            )
+
+            st.bar_chart(
+                happy_counts
+            )
+
+
+            if "product" in work_df.columns:
+
+                st.subheader(
+                    "Emotion by Product"
+                )
+
+                product_report = (
+                    pd.crosstab(
+
+                        work_df[
+                            "product"
+                        ],
+
+                        work_df[
+                            "predicted_emotion"
+                        ]
+                    )
+                )
+
+                st.dataframe(
+
+                    product_report,
+
+                    use_container_width=True
+                )
+
+
+            if "category" in work_df.columns:
+
+                st.subheader(
+                    "Emotion by Category"
+                )
+
+                category_report = (
+                    pd.crosstab(
+
+                        work_df[
+                            "category"
+                        ],
+
+                        work_df[
+                            "predicted_emotion"
+                        ]
+                    )
+                )
+
+                st.dataframe(
+
+                    category_report,
+
+                    use_container_width=True
+                )
+
+
+            if "region" in work_df.columns:
+
+                st.subheader(
+                    "Emotion by Region"
+                )
+
+                region_report = (
+                    pd.crosstab(
+
+                        work_df[
+                            "region"
+                        ],
+
+                        work_df[
+                            "predicted_emotion"
+                        ]
+                    )
+                )
+
+                st.dataframe(
+
+                    region_report,
+
+                    use_container_width=True
+                )
+
+
+            st.subheader(
+                "Complete Analyzed Customer Records"
+            )
+
+            st.dataframe(
+
+                work_df,
+
+                use_container_width=True
+            )
+
+
+            st.download_button(
+
+                "Download Complete Customer Report",
+
+                work_df.to_csv(
+                    index=False
+                ).encode("utf-8"),
+
+                "complete_customer_report.csv",
+
+                "text/csv"
+            )
+
+
+            st.download_button(
+
+                "Download Emotion Summary",
+
+                report.to_csv(
+                    index=False
+                ).encode("utf-8"),
+
+                "emotion_summary_report.csv",
+
+                "text/csv"
+            )
