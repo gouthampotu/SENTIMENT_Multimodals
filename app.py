@@ -11,7 +11,7 @@ from transformers import pipeline
 # ==========================================
 
 st.set_page_config(
-    page_title="Customer Happiness GenAI Bot",
+    page_title="Sentiment Analysis GenAI Bot",
     page_icon="🤖",
     layout="wide"
 )
